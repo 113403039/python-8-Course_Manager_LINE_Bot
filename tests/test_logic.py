@@ -109,6 +109,164 @@ class TestWeights(unittest.TestCase):
         self.assertFalse(valid)
         self.assertIn("整數", message)
 
+    def test_validate_weights_rejects_item_names_with_spaces(self):
+        valid, message = calc_and_storage.validate_weights({"期中 考": 100})
+        self.assertFalse(valid)
+        self.assertIn("不可包含空白", message)
+
+
+class TestScores(unittest.TestCase):
+    def test_validate_score_accepts_normal_score(self):
+        self.assertEqual(calc_and_storage.validate_score(85), (True, "成績格式正確"))
+
+    def test_validate_score_warns_without_changing_score_over_100(self):
+        valid, message = calc_and_storage.validate_score(105)
+        self.assertTrue(valid)
+        self.assertIn("105", message)
+        self.assertIn("確認", message)
+
+    def test_validate_score_rejects_negative_non_finite_and_non_numeric_values(self):
+        for score in (-1, float("nan"), float("inf"), "90", True):
+            with self.subTest(score=score):
+                valid, _ = calc_and_storage.validate_score(score)
+                self.assertFalse(valid)
+
+
+class TestGradeCalculations(unittest.TestCase):
+    def test_weighted_total_preserves_over_100_score_contribution(self):
+        self.assertEqual(
+            calc_and_storage.weighted_total({"期中考": 30}, {"期中考": 105}),
+            31.5,
+        )
+
+    def test_weighted_total_handles_large_finite_score(self):
+        self.assertEqual(
+            calc_and_storage.weighted_total({"期中考": 100}, {"期中考": 1e308}),
+            1e308,
+        )
+
+    def test_weighted_total_rejects_unrepresentable_accumulation(self):
+        with self.assertRaisesRegex(ValueError, "加權總分超出可計算範圍"):
+            calc_and_storage.weighted_total(
+                {"期中考": 100, "期末考": 100},
+                {"期中考": 1e308, "期末考": 1e308},
+            )
+
+    def test_weighted_total_counts_only_known_grades(self):
+        self.assertEqual(
+            calc_and_storage.weighted_total(
+                {"作業": 20, "期中考": 30, "期末考": 50},
+                {"作業": 90, "期中考": 100},
+            ),
+            48.0,
+        )
+
+    def test_weighted_total_rejects_grades_for_unknown_items(self):
+        with self.assertRaisesRegex(ValueError, "不在配分中"):
+            calc_and_storage.weighted_total({"作業": 100}, {"期中考": 90})
+
+    def test_final_total_caps_only_at_100(self):
+        self.assertEqual(calc_and_storage.final_total(106), 100)
+        self.assertEqual(calc_and_storage.final_total(86.5), 86.5)
+
+    def test_weighted_raw_total_of_106_is_capped_to_100(self):
+        raw_total = calc_and_storage.weighted_total(
+            {"作業": 20, "期中考": 30, "期末考": 40, "出席": 10, "加分": 10},
+            {"作業": 100, "期中考": 100, "期末考": 100, "出席": 100, "加分": 60},
+        )
+        self.assertEqual(raw_total, 106)
+        self.assertEqual(calc_and_storage.final_total(raw_total), 100)
+
+    def test_required_score_matches_spec_example(self):
+        self.assertEqual(
+            calc_and_storage.required_score(
+                {"作業": 20, "期中考": 30, "出席": 10, "期末考": 40},
+                {"作業": 90, "期中考": 100, "出席": 100},
+                "期末考",
+                85,
+            ),
+            67.5,
+        )
+
+    def test_required_score_requires_assumptions_for_other_unknown_items(self):
+        grading = {"作業": 20, "期中考": 30, "出席": 10, "期末考": 40}
+        grades = {"期中考": 100}
+        with self.assertRaisesRegex(ValueError, "作業、出席"):
+            calc_and_storage.required_score(grading, grades, "期末考", 85)
+
+        self.assertEqual(
+            calc_and_storage.required_score(
+                grading,
+                grades,
+                "期末考",
+                85,
+                assumptions={"作業": 90, "出席": 100},
+            ),
+            67.5,
+        )
+
+    def test_required_score_does_not_count_existing_target_grade(self):
+        self.assertEqual(
+            calc_and_storage.required_score(
+                {"作業": 50, "期末考": 50},
+                {"作業": 80, "期末考": 100},
+                "期末考",
+                70,
+            ),
+            60.0,
+        )
+
+    def test_required_score_ignores_overflow_from_existing_target_grade(self):
+        self.assertEqual(
+            calc_and_storage.required_score(
+                {"作業": 100, "期末考": 100},
+                {"作業": 1e308, "期末考": 1e308},
+                "期末考",
+                85,
+            ),
+            0.0,
+        )
+
+    def test_required_score_rejects_zero_weight_target(self):
+        with self.assertRaisesRegex(ValueError, "配分為 0"):
+            calc_and_storage.required_score(
+                {"作業": 100, "加分": 0},
+                {"作業": 80},
+                "加分",
+                85,
+            )
+
+    def test_required_score_does_not_cap_requirement_at_100(self):
+        self.assertEqual(
+            calc_and_storage.required_score(
+                {"作業": 50, "期末考": 50},
+                {"作業": 80},
+                "期末考",
+                95,
+            ),
+            110.0,
+        )
+
+    def test_required_score_rejects_target_total_above_100(self):
+        with self.assertRaisesRegex(ValueError, "目標學期成績不可超過 100"):
+            calc_and_storage.required_score(
+                {"作業": 50, "期末考": 50},
+                {"作業": 80},
+                "期末考",
+                110,
+            )
+
+    def test_required_score_returns_zero_when_target_is_already_met(self):
+        self.assertEqual(
+            calc_and_storage.required_score(
+                {"作業": 80, "期末考": 20},
+                {"作業": 100},
+                "期末考",
+                60,
+            ),
+            0.0,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
