@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 import math
 import os
 import re
@@ -227,3 +228,58 @@ def required_score(grading, grades, target_item, target_score, assumptions=None)
     # 其他項目已達標時，目標項目最低只需 0 分。
     remaining_score = max(target_score - other_contribution, 0.0)
     return remaining_score / (grading[target_item] / 100)
+
+
+
+
+
+def valid_date(date_text):
+    """Validate a strict YYYY-MM-DD date and return (is_valid, message)."""
+    if not isinstance(date_text, str):
+        return False, "日期必須使用 YYYY-MM-DD 格式，例如 2026-12-25。"
+    try:
+        parsed_date = datetime.strptime(date_text, "%Y-%m-%d")
+    except ValueError:
+        return False, "日期無效，請使用 YYYY-MM-DD 格式，例如 2026-12-25。"
+    if parsed_date.strftime("%Y-%m-%d") != date_text:
+        return False, "日期格式錯誤，請使用 YYYY-MM-DD 格式，例如 2026-12-25。"
+    return True, "日期格式正確。"
+
+
+def add_event(course_data, exam_name, event_date):
+    """Add one exam event to a course; return (success, message)."""
+    valid, message = valid_date(event_date)
+    if not valid:
+        return False, message
+    if not isinstance(exam_name, str) or not exam_name.strip():
+        return False, "考試名稱不可空白。"
+    events = course_data.setdefault("events", [])
+    if not isinstance(events, list):
+        return False, "課程考試資料格式不正確。"
+    if any(
+        isinstance(event, dict)
+        and event.get("date") == event_date
+        for event in events
+    ):
+        return False, f"{event_date} 已有「{exam_name}」考試，不能重複新增。"
+    events.append({"name": exam_name, "date": event_date})
+    return True, f"已新增「{exam_name}」考試日期 {event_date}。"
+
+
+def query_events_by_date(user_data, event_date):
+    """Return exams for one date from this user's own course records."""
+    valid, message = valid_date(event_date)
+    if not valid:
+        raise ValueError(message)
+    matches = []
+    for course_name, course_data in user_data.get("courses", {}).items():
+        for event in course_data.get("events", []):
+            if isinstance(event, dict) and event.get("date") == event_date:
+                matches.append(
+                    {
+                        "course": course_name,
+                        "name": event.get("name", ""),
+                        "date": event_date,
+                    }
+                )
+    return matches
